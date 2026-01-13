@@ -22,6 +22,8 @@ export default function Dashboard() {
   ]);
 
   const [isConnected, setIsConnected] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "history">("home");
 
   const toggleWatering = (zoneId: string) => {
     setZones((prev) =>
@@ -54,16 +56,79 @@ export default function Dashboard() {
             <h1 className="text-xl font-bold">Smart Watering</h1>
             <p className="text-green-100 text-sm">Garden Control</p>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-300" : "bg-red-400"}`}
-            />
-            <span className="text-sm">
-              {isConnected ? "Connected" : "Offline"}
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-300" : "bg-red-400"}`}
+              />
+              <span className="text-sm">
+                {isConnected ? "Connected" : "Offline"}
+              </span>
+            </div>
+            <button
+              onClick={() => setMenuOpen(true)}
+              className="p-2 hover:bg-green-700 rounded-lg transition-colors"
+              aria-label="Open menu"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Slide-out Menu */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-0 top-0 h-full w-64 bg-white dark:bg-gray-800 shadow-xl">
+            <div className="p-4 bg-green-600 text-white flex justify-between items-center">
+              <h2 className="font-semibold">Menu</h2>
+              <button
+                onClick={() => setMenuOpen(false)}
+                className="p-1 hover:bg-green-700 rounded"
+                aria-label="Close menu"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <nav className="p-2">
+              {[
+                { id: "home", label: "Home", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
+                { id: "soil", label: "Soil", icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+                { id: "rain", label: "Rain", icon: "M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" },
+                { id: "history", label: "History", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setCurrentPage(item.id as typeof currentPage);
+                    setMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${
+                    currentPage === item.id
+                      ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                  </svg>
+                  {item.label}
+                  {currentPage === item.id && (
+                    <span className="ml-auto text-xs bg-green-600 text-white px-2 py-0.5 rounded">
+                      Current
+                    </span>
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="p-4 max-w-lg mx-auto">
