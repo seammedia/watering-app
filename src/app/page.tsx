@@ -13,6 +13,8 @@ interface WaterZone {
   lastWatered: string | null;
   moistureLevel: number | null;
   online: boolean;
+  plantType?: string;
+  plantDate?: string;
 }
 
 interface DeviceStatus {
@@ -82,6 +84,8 @@ export default function Dashboard() {
       lastWatered: null,
       moistureLevel: null,
       online: false,
+      plantType: "Leighton Greens",
+      plantDate: "13/12/2025",
     },
   ]);
 
@@ -488,6 +492,36 @@ export default function Dashboard() {
                           {zone.isWatering ? "Watering" : "Idle"}
                         </span>
                       </div>
+
+                      {/* Plant Type */}
+                      {zone.plantType && (
+                        <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                            </svg>
+                            <span className="text-gray-600 dark:text-gray-300">Plant</span>
+                          </div>
+                          <span className="font-semibold text-gray-800 dark:text-white">
+                            {zone.plantType}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Plant Date */}
+                      {zone.plantDate && (
+                        <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span className="text-gray-600 dark:text-gray-300">Plant Date</span>
+                          </div>
+                          <span className="font-semibold text-gray-800 dark:text-white">
+                            {zone.plantDate}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Last Watered */}
                       <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
