@@ -66,6 +66,7 @@ interface WateringEventWithZone {
 
 interface HistoryData {
   events: WateringEventWithZone[];
+  lastWateredByZone: Record<string, string>;
   stats: {
     totalEvents: number;
     totalDurationSeconds: number;
@@ -107,6 +108,27 @@ export default function Dashboard() {
       if (response.ok) {
         const data: HistoryData = await response.json();
         setHistory(data);
+
+        // Update zones with last watered times from database
+        if (data.lastWateredByZone) {
+          setZones((prev) =>
+            prev.map((zone) => {
+              const lastWatered = data.lastWateredByZone[zone.id];
+              if (lastWatered) {
+                return {
+                  ...zone,
+                  lastWatered: new Date(lastWatered).toLocaleString("en-AU", {
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                };
+              }
+              return zone;
+            })
+          );
+        }
       }
     } catch (error) {
       console.error("Failed to fetch history:", error);
@@ -159,6 +181,11 @@ export default function Dashboard() {
     const interval = setInterval(fetchDeviceStatus, 30000);
     return () => clearInterval(interval);
   }, [fetchDeviceStatus]);
+
+  // Fetch history on initial load to get last watered times
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   useEffect(() => {
     if ((currentPage === "rain" || currentPage === "weather") && !weather && !weatherLoading) {
@@ -656,7 +683,7 @@ export default function Dashboard() {
                   >
                     <span
                       className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow transition-transform ${
-                        zone.isWatering ? "translate-x-9" : "translate-x-1"
+                        zone.isWatering ? "translate-x-8" : "translate-x-1"
                       }`}
                     />
                     {isControlling === zone.id && (

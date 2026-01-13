@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getWateringHistory, getRecentWeatherSnapshots, isSupabaseConfigured } from "@/lib/supabase";
+import { getWateringHistory, getRecentWeatherSnapshots, getLastWateredForZones, isSupabaseConfigured } from "@/lib/supabase";
 
 export async function GET(request: Request) {
   try {
@@ -13,9 +13,10 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get("limit") || "50");
     const zoneId = searchParams.get("zoneId") || undefined;
 
-    const [wateringEvents, weatherSnapshots] = await Promise.all([
+    const [wateringEvents, weatherSnapshots, lastWateredByZone] = await Promise.all([
       getWateringHistory(limit, zoneId),
       getRecentWeatherSnapshots(10),
+      getLastWateredForZones(),
     ]);
 
     // Calculate statistics
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       events: wateringEvents,
       weatherSnapshots,
+      lastWateredByZone,
       stats: {
         totalEvents,
         totalDurationSeconds: totalDuration,

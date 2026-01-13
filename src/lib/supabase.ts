@@ -266,3 +266,31 @@ export async function getSoilReadings(
 
   return data || [];
 }
+
+export async function getLastWateredForZones(): Promise<Record<string, string>> {
+  if (!supabase) {
+    return {};
+  }
+
+  // Get the most recent completed watering event for each zone
+  const { data, error } = await supabase
+    .from("watering_events")
+    .select("zone_id, ended_at")
+    .not("ended_at", "is", null)
+    .order("ended_at", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching last watered times:", error);
+    return {};
+  }
+
+  // Build a map of zone_id -> last_watered timestamp (most recent first)
+  const lastWatered: Record<string, string> = {};
+  for (const event of data || []) {
+    if (!lastWatered[event.zone_id] && event.ended_at) {
+      lastWatered[event.zone_id] = event.ended_at;
+    }
+  }
+
+  return lastWatered;
+}
