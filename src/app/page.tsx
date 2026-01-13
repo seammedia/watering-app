@@ -14,24 +14,10 @@ export default function Dashboard() {
   const [zones, setZones] = useState<WaterZone[]>([
     {
       id: "zone-1",
-      name: "Front Garden",
+      name: "Front Right Garden Hedges",
       isWatering: false,
-      lastWatered: "2 hours ago",
-      moistureLevel: 45,
-    },
-    {
-      id: "zone-2",
-      name: "Back Garden",
-      isWatering: false,
-      lastWatered: "Yesterday",
-      moistureLevel: 32,
-    },
-    {
-      id: "zone-3",
-      name: "Vegetable Patch",
-      isWatering: false,
-      lastWatered: "3 days ago",
-      moistureLevel: 18,
+      lastWatered: null,
+      moistureLevel: null,
     },
   ]);
 
