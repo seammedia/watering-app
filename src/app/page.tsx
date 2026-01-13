@@ -1,37 +1,126 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
+
+const FRONT_TAP_DEVICE_ID = "bf9d467329b87e8748kbam";
 
 interface WaterZone {
   id: string;
+  deviceId: string;
   name: string;
   isWatering: boolean;
   lastWatered: string | null;
   moistureLevel: number | null;
+  online: boolean;
+}
+
+interface DeviceStatus {
+  id: string;
+  name: string;
+  online: boolean;
+  isOn: boolean;
 }
 
 export default function Dashboard() {
   const [zones, setZones] = useState<WaterZone[]>([
     {
       id: "zone-1",
+      deviceId: FRONT_TAP_DEVICE_ID,
       name: "Front Right Garden Hedges",
       isWatering: false,
       lastWatered: null,
       moistureLevel: null,
+      online: false,
     },
   ]);
 
   const [isConnected, setIsConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isControlling, setIsControlling] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "history">("home");
 
-  const toggleWatering = (zoneId: string) => {
-    setZones((prev) =>
-      prev.map((zone) =>
-        zone.id === zoneId ? { ...zone, isWatering: !zone.isWatering } : zone
-      )
-    );
+  const fetchDeviceStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/device/${FRONT_TAP_DEVICE_ID}`);
+      if (response.ok) {
+        const data: DeviceStatus = await response.json();
+        setZones((prev) =>
+          prev.map((zone) =>
+            zone.deviceId === data.id
+              ? { ...zone, isWatering: data.isOn, online: data.online }
+              : zone
+          )
+        );
+        setIsConnected(true);
+      } else {
+        setIsConnected(false);
+      }
+    } catch (error) {
+      console.error("Failed to fetch device status:", error);
+      setIsConnected(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDeviceStatus();
+    const interval = setInterval(fetchDeviceStatus, 30000);
+    return () => clearInterval(interval);
+  }, [fetchDeviceStatus]);
+
+  const toggleWatering = async (zoneId: string) => {
+    const zone = zones.find((z) => z.id === zoneId);
+    if (!zone) return;
+
+    setIsControlling(zoneId);
+    const newState = !zone.isWatering;
+
+    try {
+      const response = await fetch(`/api/device/${zone.deviceId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: newState ? "on" : "off" }),
+      });
+
+      if (response.ok) {
+        setZones((prev) =>
+          prev.map((z) =>
+            z.id === zoneId
+              ? {
+                  ...z,
+                  isWatering: newState,
+                  lastWatered: newState ? null : new Date().toLocaleString(),
+                }
+              : z
+          )
+        );
+      } else {
+        console.error("Failed to control device");
+      }
+    } catch (error) {
+      console.error("Error controlling device:", error);
+    } finally {
+      setIsControlling(null);
+    }
+  };
+
+  const waterAll = async () => {
+    for (const zone of zones) {
+      if (!zone.isWatering) {
+        await toggleWatering(zone.id);
+      }
+    }
+  };
+
+  const stopAll = async () => {
+    for (const zone of zones) {
+      if (zone.isWatering) {
+        await toggleWatering(zone.id);
+      }
+    }
   };
 
   const getMoistureColor = (level: number | null) => {
@@ -60,10 +149,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span
-                className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-300" : "bg-red-400"}`}
+                className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-300" : "bg-red-400"} ${isLoading ? "animate-pulse" : ""}`}
               />
               <span className="text-sm">
-                {isConnected ? "Connected" : "Offline"}
+                {isLoading ? "Connecting..." : isConnected ? "Connected" : "Offline"}
               </span>
             </div>
             <button
@@ -141,8 +230,9 @@ export default function Dashboard() {
             </h2>
             <div className="grid grid-cols-2 gap-3">
               <button
-                className="bg-blue-500 hover:bg-blue-600 text-white py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                onClick={() => alert("Water All - Coming soon with Tuya API")}
+                className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                onClick={waterAll}
+                disabled={!isConnected || isControlling !== null}
               >
                 <svg
                   className="w-5 h-5"
@@ -160,12 +250,9 @@ export default function Dashboard() {
                 Water All
               </button>
               <button
-                className="bg-red-500 hover:bg-red-600 text-white py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                onClick={() =>
-                  setZones((prev) =>
-                    prev.map((z) => ({ ...z, isWatering: false }))
-                  )
-                }
+                className="bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                onClick={stopAll}
+                disabled={!isConnected || isControlling !== null}
               >
                 <svg
                   className="w-5 h-5"
@@ -236,24 +323,39 @@ export default function Dashboard() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h3 className="font-semibold text-gray-800 dark:text-white">
-                      {zone.name}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-800 dark:text-white">
+                        {zone.name}
+                      </h3>
+                      <span
+                        className={`w-2 h-2 rounded-full ${zone.online ? "bg-green-500" : "bg-gray-400"}`}
+                        title={zone.online ? "Online" : "Offline"}
+                      />
+                    </div>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
                       Last: {zone.lastWatered || "Never"}
                     </p>
                   </div>
                   <button
                     onClick={() => toggleWatering(zone.id)}
+                    disabled={!isConnected || isControlling === zone.id}
                     className={`w-16 h-8 rounded-full transition-colors relative ${
                       zone.isWatering ? "bg-blue-500" : "bg-gray-300"
-                    }`}
+                    } ${isControlling === zone.id ? "opacity-50" : ""} ${!isConnected ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <span
                       className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow transition-transform ${
                         zone.isWatering ? "translate-x-9" : "translate-x-1"
                       }`}
                     />
+                    {isControlling === zone.id && (
+                      <span className="absolute inset-0 flex items-center justify-center">
+                        <svg className="w-4 h-4 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -308,41 +410,43 @@ export default function Dashboard() {
           </div>
         </section>
 
-        {/* Connection Status Card */}
-        <section className="mb-6">
-          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
-            <div className="flex items-start gap-3">
-              <svg
-                className="w-6 h-6 text-amber-500 flex-shrink-0"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-              <div>
-                <h3 className="font-semibold text-amber-800 dark:text-amber-200">
-                  Setup Required
-                </h3>
-                <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                  Connect your Tuya account to control your smart water tap.
-                  Configure API credentials in settings.
-                </p>
-                <button
-                  onClick={() => setIsConnected(true)}
-                  className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200 underline"
+        {/* Connection Status Card - only show when not connected */}
+        {!isConnected && !isLoading && (
+          <section className="mb-6">
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <svg
+                  className="w-6 h-6 text-amber-500 flex-shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
                 >
-                  Configure Connection
-                </button>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <div>
+                  <h3 className="font-semibold text-amber-800 dark:text-amber-200">
+                    Connection Failed
+                  </h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                    Unable to connect to your smart water tap. Please check your
+                    Tuya API credentials in the environment variables.
+                  </p>
+                  <button
+                    onClick={fetchDeviceStatus}
+                    className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200 underline"
+                  >
+                    Retry Connection
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Footer */}
         <footer className="text-center text-sm text-gray-500 dark:text-gray-400 py-4">
