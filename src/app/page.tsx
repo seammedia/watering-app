@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [isControlling, setIsControlling] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "history">("home");
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
 
   const fetchDeviceStatus = useCallback(async () => {
     try {
@@ -290,6 +291,18 @@ export default function Dashboard() {
                 className="w-full h-auto"
                 priority
               />
+              {/* Zone Overlay - Front Right Garden Hedges */}
+              <button
+                onClick={() => setSelectedZone("zone-1")}
+                className="absolute bg-blue-500/40 border-2 border-blue-500 hover:bg-blue-500/60 transition-colors cursor-pointer"
+                style={{
+                  bottom: "18%",
+                  right: "8%",
+                  width: "35%",
+                  height: "12%",
+                }}
+                title="Front Right Garden Hedges"
+              />
             </div>
             <div className="p-3 border-t border-gray-100 dark:border-gray-700">
               <div className="flex items-center justify-center gap-4 text-xs">
@@ -309,6 +322,140 @@ export default function Dashboard() {
             </div>
           </div>
         </section>
+
+        {/* Zone Detail Popup */}
+        {selectedZone && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedZone(null)} />
+            <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+              {(() => {
+                const zone = zones.find((z) => z.id === selectedZone);
+                if (!zone) return null;
+                return (
+                  <>
+                    <div className="bg-blue-500 text-white p-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-lg">{zone.name}</h3>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`w-2 h-2 rounded-full ${zone.online ? "bg-green-300" : "bg-gray-300"}`} />
+                            <span className="text-sm text-blue-100">
+                              {zone.online ? "Online" : "Offline"}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setSelectedZone(null)}
+                          className="p-1 hover:bg-blue-600 rounded"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-4">
+                      {/* Status */}
+                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <span className="text-gray-600 dark:text-gray-300">Status</span>
+                        <span className={`font-semibold ${zone.isWatering ? "text-blue-500" : "text-gray-500"}`}>
+                          {zone.isWatering ? "Watering" : "Idle"}
+                        </span>
+                      </div>
+
+                      {/* Last Watered */}
+                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-gray-600 dark:text-gray-300">Last Watered</span>
+                        </div>
+                        <span className="font-semibold text-gray-800 dark:text-white">
+                          {zone.lastWatered || "Never"}
+                        </span>
+                      </div>
+
+                      {/* Soil Moisture */}
+                      <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+                            </svg>
+                            <span className="text-gray-600 dark:text-gray-300">Soil Moisture</span>
+                          </div>
+                          <span className="font-semibold text-gray-800 dark:text-white">
+                            {zone.moistureLevel !== null ? `${zone.moistureLevel}%` : "No sensor"}
+                          </span>
+                        </div>
+                        {zone.moistureLevel !== null && (
+                          <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${getMoistureColor(zone.moistureLevel)}`}
+                              style={{ width: `${zone.moistureLevel}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Recent Rain */}
+                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                          </svg>
+                          <span className="text-gray-600 dark:text-gray-300">Recent Rain</span>
+                        </div>
+                        <span className="font-semibold text-gray-800 dark:text-white">
+                          No data
+                        </span>
+                      </div>
+
+                      {/* Zone Health */}
+                      <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full bg-blue-500" />
+                          <span className="text-gray-600 dark:text-gray-300">Zone Health</span>
+                        </div>
+                        <span className="font-semibold text-blue-600 dark:text-blue-400">
+                          Healthy
+                        </span>
+                      </div>
+
+                      {/* Control Button */}
+                      <button
+                        onClick={() => {
+                          toggleWatering(zone.id);
+                        }}
+                        disabled={!isConnected || isControlling === zone.id}
+                        className={`w-full py-3 rounded-lg font-semibold transition-colors ${
+                          zone.isWatering
+                            ? "bg-red-500 hover:bg-red-600 text-white"
+                            : "bg-blue-500 hover:bg-blue-600 text-white"
+                        } disabled:opacity-50`}
+                      >
+                        {isControlling === zone.id ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Processing...
+                          </span>
+                        ) : zone.isWatering ? (
+                          "Stop Watering"
+                        ) : (
+                          "Start Watering"
+                        )}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
 
         {/* Watering Zones */}
         <section className="mb-6">
