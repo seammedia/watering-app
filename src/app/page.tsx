@@ -75,6 +75,11 @@ interface HistoryData {
   };
 }
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export default function Dashboard() {
   const [zones, setZones] = useState<WaterZone[]>([
     {
@@ -94,12 +99,51 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isControlling, setIsControlling] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "weather" | "history">("home");
+  const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "weather" | "history" | "chat">("home");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+
+    const userMessage: ChatMessage = { role: "user", content: chatInput.trim() };
+    const newMessages = [...chatMessages, userMessage];
+    setChatMessages(newMessages);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMessages }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setChatMessages([...newMessages, { role: "assistant", content: data.response }]);
+      } else {
+        setChatMessages([
+          ...newMessages,
+          { role: "assistant", content: "Sorry, I couldn't process that request. Please try again." },
+        ]);
+      }
+    } catch (error) {
+      console.error("Chat error:", error);
+      setChatMessages([
+        ...newMessages,
+        { role: "assistant", content: "Connection error. Please check your internet and try again." },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -343,6 +387,7 @@ export default function Dashboard() {
             <nav className="p-2">
               {[
                 { id: "home", label: "Home", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
+                { id: "chat", label: "Chat", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
                 { id: "soil", label: "Soil", icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
                 { id: "weather", label: "Weather", icon: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" },
                 { id: "rain", label: "Rain", icon: "M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" },
@@ -1067,6 +1112,103 @@ export default function Dashboard() {
               </>
             )}
           </>
+        )}
+
+        {/* Chat Page */}
+        {currentPage === "chat" && (
+          <div className="flex flex-col h-[calc(100vh-180px)]">
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+              {chatMessages.length === 0 && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 text-center">
+                  <svg className="w-12 h-12 mx-auto text-green-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-2">
+                    Garden Assistant
+                  </h2>
+                  <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
+                    Ask me about your garden, watering history, or plant care tips.
+                  </p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {[
+                      "When did I last water?",
+                      "How are my hedges doing?",
+                      "Should I water today?",
+                      "Care tips for Leighton Greens",
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => {
+                          setChatInput(suggestion);
+                        }}
+                        className="text-xs bg-green-100 text-green-700 px-3 py-1.5 rounded-full hover:bg-green-200 transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {chatMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-2 ${
+                      msg.role === "user"
+                        ? "bg-green-500 text-white rounded-br-md"
+                        : "bg-white dark:bg-gray-800 text-gray-800 dark:text-white shadow-md rounded-bl-md"
+                    }`}
+                  >
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  </div>
+                </div>
+              ))}
+
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl rounded-bl-md px-4 py-3 shadow-md">
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Chat Input */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendChatMessage();
+                    }
+                  }}
+                  placeholder="Ask about your garden..."
+                  className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-2 text-sm text-gray-800 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <button
+                  onClick={sendChatMessage}
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Soil Page Placeholder */}
