@@ -8,28 +8,28 @@ export async function GET(
   const { deviceId } = await params;
 
   try {
-    const status = await getDeviceStatus(deviceId);
+    const { device, error } = await getDeviceStatus(deviceId);
 
-    if (!status) {
+    if (error || !device) {
       return NextResponse.json(
-        { error: "Failed to get device status" },
+        { error: error || "Failed to get device status" },
         { status: 500 }
       );
     }
 
-    const isOn = status.status.find((s) => s.code === "switch")?.value ?? false;
+    const isOn = device.status.find((s) => s.code === "switch")?.value ?? false;
 
     return NextResponse.json({
-      id: status.id,
-      name: status.name,
-      online: status.online,
+      id: device.id,
+      name: device.name,
+      online: device.online,
       isOn: isOn,
-      status: status.status,
+      status: device.status,
     });
   } catch (error) {
     console.error("Error fetching device:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }
     );
   }
@@ -45,12 +45,12 @@ export async function POST(
     const body = await request.json();
     const { action } = body;
 
-    let success = false;
+    let result: { success: boolean; error?: string };
 
     if (action === "on") {
-      success = await turnOnDevice(deviceId);
+      result = await turnOnDevice(deviceId);
     } else if (action === "off") {
-      success = await turnOffDevice(deviceId);
+      result = await turnOffDevice(deviceId);
     } else {
       return NextResponse.json(
         { error: "Invalid action. Use 'on' or 'off'" },
@@ -58,9 +58,9 @@ export async function POST(
       );
     }
 
-    if (!success) {
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Failed to control device" },
+        { error: result.error || "Failed to control device" },
         { status: 500 }
       );
     }
@@ -69,7 +69,7 @@ export async function POST(
   } catch (error) {
     console.error("Error controlling device:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }
     );
   }

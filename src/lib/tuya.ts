@@ -1,35 +1,30 @@
 import crypto from "crypto";
 
-const TUYA_ACCESS_ID = process.env.TUYA_ACCESS_ID!;
-const TUYA_ACCESS_SECRET = process.env.TUYA_ACCESS_SECRET!;
-const TUYA_API_ENDPOINT =
-  process.env.TUYA_API_ENDPOINT || "https://openapi.tuyaus.com";
+const TUYA_ACCESS_ID = process.env.TUYA_ACCESS_ID || "";
+const TUYA_ACCESS_SECRET = process.env.TUYA_ACCESS_SECRET || "";
+const TUYA_API_ENDPOINT = process.env.TUYA_API_ENDPOINT || "https://openapi.tuyaus.com";
 
-interface TuyaTokenResponse {
-  result: {
-    access_token: string;
-    expire_time: number;
-    refresh_token: string;
-    uid: string;
-  };
+interface TuyaResponse {
   success: boolean;
+  code?: number;
+  msg?: string;
   t: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  result?: any;
 }
 
-interface TuyaDeviceResponse {
-  result: {
-    id: string;
-    name: string;
-    online: boolean;
-    status: Array<{ code: string; value: boolean | number | string }>;
-  };
-  success: boolean;
+interface TuyaTokenResult {
+  access_token: string;
+  expire_time: number;
+  refresh_token: string;
+  uid: string;
 }
 
-interface TuyaCommandResponse {
-  result: boolean;
-  success: boolean;
-  t: number;
+interface TuyaDeviceResult {
+  id: string;
+  name: string;
+  online: boolean;
+  status: Array<{ code: string; value: boolean | number | string }>;
 }
 
 let cachedToken: { token: string; expiry: number } | null = null;
@@ -46,12 +41,7 @@ function generateSign(
     .update(body || "")
     .digest("hex");
 
-  const stringToSign = [
-    method,
-    contentHash,
-    "",
-    path,
-  ].join("\n");
+  const stringToSign = [method, contentHash, "", path].join("\n");
 
   const signStr = accessToken
     ? TUYA_ACCESS_ID + accessToken + timestamp + stringToSign
@@ -64,7 +54,11 @@ function generateSign(
     .toUpperCase();
 }
 
-async function getAccessToken(): Promise<string> {
+export async function getAccessToken(): Promise<string> {
+  if (!TUYA_ACCESS_ID || !TUYA_ACCESS_SECRET) {
+    throw new Error("Tuya credentials not configured");
+  }
+
   if (cachedToken && Date.now() < cachedToken.expiry) {
     return cachedToken.token;
   }
@@ -72,6 +66,13 @@ async function getAccessToken(): Promise<string> {
   const timestamp = Date.now().toString();
   const path = "/v1.0/token?grant_type=1";
   const sign = generateSign("GET", path, timestamp);
+
+  console.log("Tuya Token Request:", {
+    endpoint: TUYA_API_ENDPOINT,
+    path,
+    clientId: TUYA_ACCESS_ID,
+    timestamp,
+  });
 
   const response = await fetch(`${TUYA_API_ENDPOINT}${path}`, {
     method: "GET",
@@ -83,15 +84,17 @@ async function getAccessToken(): Promise<string> {
     },
   });
 
-  const data: TuyaTokenResponse = await response.json();
+  const data: TuyaResponse = await response.json();
+  console.log("Tuya Token Response:", JSON.stringify(data, null, 2));
 
   if (!data.success) {
-    throw new Error("Failed to get Tuya access token");
+    throw new Error(`Tuya auth failed: ${data.code} - ${data.msg}`);
   }
 
+  const result = data.result as TuyaTokenResult;
   cachedToken = {
-    token: data.result.access_token,
-    expiry: Date.now() + data.result.expire_time * 1000 - 60000,
+    token: result.access_token,
+    expiry: Date.now() + result.expire_time * 1000 - 60000,
   };
 
   return cachedToken.token;
@@ -99,7 +102,7 @@ async function getAccessToken(): Promise<string> {
 
 export async function getDeviceStatus(
   deviceId: string
-): Promise<TuyaDeviceResponse["result"] | null> {
+): Promise<{ device: TuyaDeviceResult | null; error?: string }> {
   try {
     const token = await getAccessToken();
     const timestamp = Date.now().toString();
@@ -117,24 +120,27 @@ export async function getDeviceStatus(
       },
     });
 
-    const data: TuyaDeviceResponse = await response.json();
+    const data: TuyaResponse = await response.json();
+    console.log("Tuya Device Response:", JSON.stringify(data, null, 2));
 
     if (!data.success) {
-      console.error("Failed to get device status:", data);
-      return null;
+      return { device: null, error: `${data.code}: ${data.msg}` };
     }
 
-    return data.result;
+    return { device: data.result as TuyaDeviceResult };
   } catch (error) {
     console.error("Error getting device status:", error);
-    return null;
+    return {
+      device: null,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
 export async function sendDeviceCommand(
   deviceId: string,
   commands: Array<{ code: string; value: boolean | number | string }>
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
   try {
     const token = await getAccessToken();
     const timestamp = Date.now().toString();
@@ -155,24 +161,31 @@ export async function sendDeviceCommand(
       body: body,
     });
 
-    const data: TuyaCommandResponse = await response.json();
+    const data: TuyaResponse = await response.json();
+    console.log("Tuya Command Response:", JSON.stringify(data, null, 2));
 
     if (!data.success) {
-      console.error("Failed to send device command:", data);
-      return false;
+      return { success: false, error: `${data.code}: ${data.msg}` };
     }
 
-    return data.result;
+    return { success: true };
   } catch (error) {
     console.error("Error sending device command:", error);
-    return false;
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
-export async function turnOnDevice(deviceId: string): Promise<boolean> {
+export async function turnOnDevice(
+  deviceId: string
+): Promise<{ success: boolean; error?: string }> {
   return sendDeviceCommand(deviceId, [{ code: "switch", value: true }]);
 }
 
-export async function turnOffDevice(deviceId: string): Promise<boolean> {
+export async function turnOffDevice(
+  deviceId: string
+): Promise<{ success: boolean; error?: string }> {
   return sendDeviceCommand(deviceId, [{ code: "switch", value: false }]);
 }
