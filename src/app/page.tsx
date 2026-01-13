@@ -296,10 +296,10 @@ export default function Dashboard() {
                 onClick={() => setSelectedZone("zone-1")}
                 className="absolute bg-blue-500/40 border-2 border-blue-500 hover:bg-blue-500/60 transition-colors cursor-pointer"
                 style={{
-                  bottom: "18%",
-                  right: "8%",
-                  width: "35%",
-                  height: "12%",
+                  bottom: "12%",
+                  right: "3%",
+                  width: "32%",
+                  height: "10%",
                 }}
                 title="Front Right Garden Hedges"
               />
