@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 interface WaterZone {
   id: string;
@@ -181,6 +182,43 @@ export default function Dashboard() {
                 </svg>
                 Stop All
               </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Property Map */}
+        <section className="mb-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+            <div className="p-4 pb-2">
+              <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
+                Property Map
+              </h2>
+            </div>
+            <div className="relative">
+              <Image
+                src="/property-map.png"
+                alt="Property map showing watering zones"
+                width={600}
+                height={300}
+                className="w-full h-auto"
+                priority
+              />
+            </div>
+            <div className="p-3 border-t border-gray-100 dark:border-gray-700">
+              <div className="flex items-center justify-center gap-4 text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-full bg-red-500" />
+                  <span className="text-gray-600 dark:text-gray-400">Needs Attention</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-full bg-yellow-500" />
+                  <span className="text-gray-600 dark:text-gray-400">Dry</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-full bg-blue-500" />
+                  <span className="text-gray-600 dark:text-gray-400">Healthy</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
