@@ -22,6 +22,36 @@ interface DeviceStatus {
   isOn: boolean;
 }
 
+interface WeatherData {
+  current: {
+    temperature: number;
+    humidity: number;
+    precipitation: number;
+    weatherCode: number;
+    weatherDescription: string;
+    windSpeed: number;
+  };
+  recentRainfall: {
+    last24h: number;
+    last7days: number;
+  };
+  forecast: Array<{
+    date: string;
+    dayName: string;
+    weatherCode: number;
+    weatherDescription: string;
+    tempMax: number;
+    tempMin: number;
+    precipitationSum: number;
+    precipitationProbability: number;
+  }>;
+  wateringRecommendation: {
+    shouldWater: boolean;
+    reason: string;
+    urgency: "none" | "low" | "medium" | "high";
+  };
+}
+
 export default function Dashboard() {
   const [zones, setZones] = useState<WaterZone[]>([
     {
@@ -39,8 +69,25 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isControlling, setIsControlling] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "history">("home");
+  const [currentPage, setCurrentPage] = useState<"home" | "soil" | "rain" | "weather" | "history">("home");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+
+  const fetchWeather = useCallback(async () => {
+    setWeatherLoading(true);
+    try {
+      const response = await fetch("/api/weather");
+      if (response.ok) {
+        const data: WeatherData = await response.json();
+        setWeather(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch weather:", error);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
 
   const fetchDeviceStatus = useCallback(async () => {
     try {
@@ -71,6 +118,12 @@ export default function Dashboard() {
     const interval = setInterval(fetchDeviceStatus, 30000);
     return () => clearInterval(interval);
   }, [fetchDeviceStatus]);
+
+  useEffect(() => {
+    if ((currentPage === "rain" || currentPage === "weather") && !weather && !weatherLoading) {
+      fetchWeather();
+    }
+  }, [currentPage, weather, weatherLoading, fetchWeather]);
 
   const toggleWatering = async (zoneId: string) => {
     const zone = zones.find((z) => z.id === zoneId);
@@ -138,6 +191,25 @@ export default function Dashboard() {
     return "Moist";
   };
 
+  const getWeatherIcon = (code: number) => {
+    if (code === 0) return "sun"; // Clear
+    if (code <= 3) return "cloud-sun"; // Partly cloudy
+    if (code <= 48) return "cloud"; // Cloudy/fog
+    if (code <= 67) return "cloud-drizzle"; // Drizzle/rain
+    if (code <= 77) return "snowflake"; // Snow
+    if (code <= 86) return "cloud-rain"; // Rain showers
+    return "cloud-lightning"; // Thunderstorm
+  };
+
+  const getUrgencyColor = (urgency: string) => {
+    switch (urgency) {
+      case "high": return "bg-red-100 border-red-300 text-red-800";
+      case "medium": return "bg-yellow-100 border-yellow-300 text-yellow-800";
+      case "low": return "bg-blue-100 border-blue-300 text-blue-800";
+      default: return "bg-green-100 border-green-300 text-green-800";
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-blue-50 dark:from-gray-900 dark:to-gray-800">
       {/* Header */}
@@ -190,6 +262,7 @@ export default function Dashboard() {
               {[
                 { id: "home", label: "Home", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
                 { id: "soil", label: "Soil", icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+                { id: "weather", label: "Weather", icon: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" },
                 { id: "rain", label: "Rain", icon: "M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" },
                 { id: "history", label: "History", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
               ].map((item) => (
@@ -223,6 +296,8 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className="p-4 max-w-lg mx-auto">
+        {currentPage === "home" && (
+          <>
         {/* Quick Actions */}
         <section className="mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
@@ -595,6 +670,323 @@ export default function Dashboard() {
                   </button>
                 </div>
               </div>
+            </div>
+          </section>
+        )}
+          </>
+        )}
+
+        {/* Rain/Weather Page */}
+        {currentPage === "rain" && (
+          <>
+            {weatherLoading && !weather && (
+              <div className="flex items-center justify-center py-12">
+                <svg className="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              </div>
+            )}
+
+            {weather && (
+              <>
+                {/* Watering Recommendation */}
+                <section className="mb-6">
+                  <div className={`rounded-xl shadow-md p-4 border-2 ${getUrgencyColor(weather.wateringRecommendation.urgency)}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2 rounded-full ${weather.wateringRecommendation.shouldWater ? "bg-red-200" : "bg-green-200"}`}>
+                        {weather.wateringRecommendation.shouldWater ? (
+                          <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <div>
+                        <h2 className="font-bold text-lg">
+                          {weather.wateringRecommendation.shouldWater ? "Watering Recommended" : "No Watering Needed"}
+                        </h2>
+                        <p className="text-sm mt-1">{weather.wateringRecommendation.reason}</p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Current Conditions */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      Current Conditions
+                    </h2>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="text-4xl font-bold text-gray-800 dark:text-white">
+                        {Math.round(weather.current.temperature)}°C
+                      </div>
+                      <div>
+                        <p className="text-gray-600 dark:text-gray-300">{weather.current.weatherDescription}</p>
+                        <p className="text-sm text-gray-500">Wind: {weather.current.windSpeed} km/h</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                        <div className="text-sm text-gray-500 dark:text-gray-400">Humidity</div>
+                        <div className="font-semibold text-gray-800 dark:text-white">{weather.current.humidity}%</div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                        <div className="text-sm text-gray-500 dark:text-gray-400">Precipitation</div>
+                        <div className="font-semibold text-gray-800 dark:text-white">{weather.current.precipitation} mm</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Recent Rainfall */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      Recent Rainfall
+                    </h2>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 text-center">
+                        <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+                          {weather.recentRainfall.last24h} mm
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">Last 24 hours</div>
+                      </div>
+                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 text-center">
+                        <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+                          {weather.recentRainfall.last7days} mm
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">Last 7 days</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* 7-Day Forecast */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      7-Day Forecast
+                    </h2>
+                    <div className="space-y-2">
+                      {weather.forecast.map((day, i) => (
+                        <div
+                          key={day.date}
+                          className={`flex items-center justify-between p-3 rounded-lg ${
+                            i === 0 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-gray-50 dark:bg-gray-700"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 flex-1">
+                            <div className="w-12 font-medium text-gray-800 dark:text-white">
+                              {day.dayName}
+                            </div>
+                            <div className="flex-1 text-sm text-gray-600 dark:text-gray-400">
+                              {day.weatherDescription}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            {day.precipitationSum > 0 && (
+                              <div className="flex items-center gap-1 text-blue-500">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z" />
+                                </svg>
+                                <span className="text-xs">{day.precipitationSum}mm</span>
+                              </div>
+                            )}
+                            {day.precipitationProbability > 0 && (
+                              <div className="text-xs text-gray-500">
+                                {day.precipitationProbability}%
+                              </div>
+                            )}
+                            <div className="text-sm font-medium text-gray-800 dark:text-white">
+                              {Math.round(day.tempMax)}° / {Math.round(day.tempMin)}°
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                {/* Refresh Button */}
+                <div className="text-center mb-6">
+                  <button
+                    onClick={fetchWeather}
+                    disabled={weatherLoading}
+                    className="text-blue-500 hover:text-blue-600 text-sm font-medium disabled:opacity-50"
+                  >
+                    {weatherLoading ? "Refreshing..." : "Refresh Weather Data"}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* Weather Page - 7 Day Forecast */}
+        {currentPage === "weather" && (
+          <>
+            {weatherLoading && !weather && (
+              <div className="flex items-center justify-center py-12">
+                <svg className="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              </div>
+            )}
+
+            {weather && (
+              <>
+                {/* Location Header */}
+                <section className="mb-6">
+                  <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl shadow-md p-4 text-white">
+                    <div className="flex items-center gap-2 mb-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span className="font-medium">Mount Eliza, Victoria</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-5xl font-bold">
+                        {Math.round(weather.current.temperature)}°
+                      </div>
+                      <div>
+                        <p className="text-xl">{weather.current.weatherDescription}</p>
+                        <p className="text-blue-100 text-sm">
+                          Feels like {Math.round(weather.current.temperature)}°C
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Current Details */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      Current Details
+                    </h2>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+                        <svg className="w-6 h-6 mx-auto text-blue-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                        </svg>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Humidity</div>
+                        <div className="font-semibold text-gray-800 dark:text-white">{weather.current.humidity}%</div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+                        <svg className="w-6 h-6 mx-auto text-gray-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        </svg>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Wind</div>
+                        <div className="font-semibold text-gray-800 dark:text-white">{weather.current.windSpeed} km/h</div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+                        <svg className="w-6 h-6 mx-auto text-blue-400 mb-1" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z" />
+                        </svg>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Precip</div>
+                        <div className="font-semibold text-gray-800 dark:text-white">{weather.current.precipitation} mm</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* 7-Day Forecast */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      7-Day Forecast
+                    </h2>
+                    <div className="space-y-3">
+                      {weather.forecast.map((day, i) => (
+                        <div
+                          key={day.date}
+                          className={`flex items-center p-3 rounded-lg ${
+                            i === 0 ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800" : "bg-gray-50 dark:bg-gray-700"
+                          }`}
+                        >
+                          <div className="w-16 font-medium text-gray-800 dark:text-white">
+                            {day.dayName}
+                          </div>
+                          <div className="flex-1">
+                            <div className="text-sm text-gray-600 dark:text-gray-300">
+                              {day.weatherDescription}
+                            </div>
+                            {day.precipitationProbability > 0 && (
+                              <div className="flex items-center gap-1 text-blue-500 text-xs mt-0.5">
+                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z" />
+                                </svg>
+                                {day.precipitationProbability}%
+                                {day.precipitationSum > 0 && ` · ${day.precipitationSum}mm`}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="font-semibold text-gray-800 dark:text-white">
+                              {Math.round(day.tempMax)}°
+                            </span>
+                            <span className="text-gray-400 dark:text-gray-500 ml-1">
+                              {Math.round(day.tempMin)}°
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                {/* Refresh Button */}
+                <div className="text-center mb-6">
+                  <button
+                    onClick={fetchWeather}
+                    disabled={weatherLoading}
+                    className="text-blue-500 hover:text-blue-600 text-sm font-medium disabled:opacity-50"
+                  >
+                    {weatherLoading ? "Refreshing..." : "Refresh Weather"}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* Soil Page Placeholder */}
+        {currentPage === "soil" && (
+          <section className="mb-6">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-8 text-center">
+              <svg className="w-16 h-16 mx-auto text-green-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                Soil Sensors Coming Soon
+              </h2>
+              <p className="text-gray-500 dark:text-gray-400">
+                Zigbee soil moisture sensors will be integrated here to monitor soil conditions across your garden zones.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {/* History Page Placeholder */}
+        {currentPage === "history" && (
+          <section className="mb-6">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-8 text-center">
+              <svg className="w-16 h-16 mx-auto text-blue-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                Watering History Coming Soon
+              </h2>
+              <p className="text-gray-500 dark:text-gray-400">
+                View past watering events, durations, and water usage statistics here.
+              </p>
             </div>
           </section>
         )}
