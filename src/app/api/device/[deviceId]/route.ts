@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDeviceStatus, turnOnDevice, turnOffDevice } from "@/lib/tuya";
+import { logWateringStart, logWateringEnd } from "@/lib/supabase";
 
 export async function GET(
   request: NextRequest,
@@ -43,14 +44,28 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const { action } = body;
+    const { action, zoneId, zoneName, eventId } = body;
 
     let result: { success: boolean; error?: string };
 
     if (action === "on") {
       result = await turnOnDevice(deviceId);
+
+      // Log watering start to database (fire and forget)
+      if (result.success && zoneId && zoneName) {
+        logWateringStart(zoneId, zoneName, deviceId, "manual").catch((err) =>
+          console.error("Failed to log watering start:", err)
+        );
+      }
     } else if (action === "off") {
       result = await turnOffDevice(deviceId);
+
+      // Log watering end to database (fire and forget)
+      if (result.success && eventId) {
+        logWateringEnd(eventId).catch((err) =>
+          console.error("Failed to log watering end:", err)
+        );
+      }
     } else {
       return NextResponse.json(
         { error: "Invalid action. Use 'on' or 'off'" },

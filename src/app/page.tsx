@@ -52,6 +52,26 @@ interface WeatherData {
   };
 }
 
+interface WateringEventWithZone {
+  id: string;
+  zone_id: string;
+  started_at: string;
+  ended_at?: string;
+  duration_seconds?: number;
+  trigger: string;
+  zones?: { name: string };
+}
+
+interface HistoryData {
+  events: WateringEventWithZone[];
+  stats: {
+    totalEvents: number;
+    totalDurationSeconds: number;
+    averageDurationSeconds: number;
+    eventsLast7Days: number;
+  };
+}
+
 export default function Dashboard() {
   const [zones, setZones] = useState<WaterZone[]>([
     {
@@ -73,6 +93,23 @@ export default function Dashboard() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [history, setHistory] = useState<HistoryData | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const response = await fetch("/api/history");
+      if (response.ok) {
+        const data: HistoryData = await response.json();
+        setHistory(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch history:", error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   const fetchWeather = useCallback(async () => {
     setWeatherLoading(true);
@@ -125,6 +162,12 @@ export default function Dashboard() {
     }
   }, [currentPage, weather, weatherLoading, fetchWeather]);
 
+  useEffect(() => {
+    if (currentPage === "history" && !history && !historyLoading) {
+      fetchHistory();
+    }
+  }, [currentPage, history, historyLoading, fetchHistory]);
+
   const toggleWatering = async (zoneId: string) => {
     const zone = zones.find((z) => z.id === zoneId);
     if (!zone) return;
@@ -136,7 +179,11 @@ export default function Dashboard() {
       const response = await fetch(`/api/device/${zone.deviceId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: newState ? "on" : "off" }),
+        body: JSON.stringify({
+          action: newState ? "on" : "off",
+          zoneId: zone.id,
+          zoneName: zone.name,
+        }),
       });
 
       if (response.ok) {
@@ -151,6 +198,10 @@ export default function Dashboard() {
               : z
           )
         );
+        // Refresh history after watering ends
+        if (!newState) {
+          setTimeout(() => fetchHistory(), 1000);
+        }
       } else {
         console.error("Failed to control device");
       }
@@ -974,21 +1025,150 @@ export default function Dashboard() {
           </section>
         )}
 
-        {/* History Page Placeholder */}
+        {/* History Page */}
         {currentPage === "history" && (
-          <section className="mb-6">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-8 text-center">
-              <svg className="w-16 h-16 mx-auto text-blue-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
-                Watering History Coming Soon
-              </h2>
-              <p className="text-gray-500 dark:text-gray-400">
-                View past watering events, durations, and water usage statistics here.
-              </p>
-            </div>
-          </section>
+          <>
+            {historyLoading && !history && (
+              <div className="flex items-center justify-center py-12">
+                <svg className="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              </div>
+            )}
+
+            {history && (
+              <>
+                {/* Statistics */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      Statistics
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 text-center">
+                        <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {history.stats.totalEvents}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Total Events</div>
+                      </div>
+                      <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3 text-center">
+                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                          {history.stats.eventsLast7Days}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Last 7 Days</div>
+                      </div>
+                      <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3 text-center">
+                        <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                          {Math.round(history.stats.totalDurationSeconds / 60)}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Total Minutes</div>
+                      </div>
+                      <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-3 text-center">
+                        <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                          {Math.round(history.stats.averageDurationSeconds / 60)}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Avg Minutes</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Recent Events */}
+                <section className="mb-6">
+                  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-3">
+                      Recent Watering Events
+                    </h2>
+                    {history.events.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                        <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p>No watering events yet.</p>
+                        <p className="text-sm mt-1">Events will appear here when you water your garden.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {history.events.slice(0, 20).map((event) => {
+                          const startDate = new Date(event.started_at);
+                          const isToday = startDate.toDateString() === new Date().toDateString();
+                          const duration = event.duration_seconds
+                            ? `${Math.floor(event.duration_seconds / 60)}m ${event.duration_seconds % 60}s`
+                            : "In progress";
+
+                          return (
+                            <div
+                              key={event.id}
+                              className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={`w-2 h-2 rounded-full ${event.ended_at ? "bg-green-500" : "bg-blue-500 animate-pulse"}`} />
+                                <div>
+                                  <div className="font-medium text-gray-800 dark:text-white text-sm">
+                                    {event.zones?.name || "Unknown Zone"}
+                                  </div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {isToday ? "Today" : startDate.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}
+                                    {" at "}
+                                    {startDate.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className={`text-sm font-medium ${event.ended_at ? "text-gray-800 dark:text-white" : "text-blue-500"}`}>
+                                  {duration}
+                                </div>
+                                <div className="text-xs text-gray-500 capitalize">
+                                  {event.trigger}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* Refresh Button */}
+                <div className="text-center mb-6">
+                  <button
+                    onClick={() => {
+                      setHistory(null);
+                      fetchHistory();
+                    }}
+                    disabled={historyLoading}
+                    className="text-blue-500 hover:text-blue-600 text-sm font-medium disabled:opacity-50"
+                  >
+                    {historyLoading ? "Refreshing..." : "Refresh History"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {!history && !historyLoading && (
+              <section className="mb-6">
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-8 text-center">
+                  <svg className="w-16 h-16 mx-auto text-amber-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                    Database Not Connected
+                  </h2>
+                  <p className="text-gray-500 dark:text-gray-400">
+                    Configure Supabase credentials to enable watering history tracking.
+                  </p>
+                  <button
+                    onClick={fetchHistory}
+                    className="mt-4 text-blue-500 hover:text-blue-600 text-sm font-medium"
+                  >
+                    Retry Connection
+                  </button>
+                </div>
+              </section>
+            )}
+          </>
         )}
 
         {/* Footer */}
