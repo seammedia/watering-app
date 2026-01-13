@@ -296,10 +296,10 @@ export default function Dashboard() {
                 onClick={() => setSelectedZone("zone-1")}
                 className="absolute bg-blue-500/40 border-2 border-blue-500 hover:bg-blue-500/60 transition-colors cursor-pointer"
                 style={{
-                  bottom: "12%",
-                  right: "3%",
-                  width: "32%",
-                  height: "10%",
+                  bottom: "5%",
+                  right: "0%",
+                  width: "52%",
+                  height: "8%",
                 }}
                 title="Front Right Garden Hedges"
               />
@@ -466,7 +466,8 @@ export default function Dashboard() {
             {zones.map((zone) => (
               <div
                 key={zone.id}
-                className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4"
+                onClick={() => setSelectedZone(zone.id)}
+                className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 cursor-pointer hover:shadow-lg transition-shadow"
               >
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -484,7 +485,10 @@ export default function Dashboard() {
                     </p>
                   </div>
                   <button
-                    onClick={() => toggleWatering(zone.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleWatering(zone.id);
+                    }}
                     disabled={!isConnected || isControlling === zone.id}
                     className={`w-16 h-8 rounded-full transition-colors relative ${
                       zone.isWatering ? "bg-blue-500" : "bg-gray-300"
