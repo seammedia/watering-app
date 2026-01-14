@@ -47,24 +47,29 @@ export async function POST(
     const { action, zoneId, zoneName, eventId } = body;
 
     let result: { success: boolean; error?: string };
+    let wateringEventId: string | null = null;
 
     if (action === "on") {
       result = await turnOnDevice(deviceId);
 
-      // Log watering start to database (fire and forget)
+      // Log watering start to database and get event ID
       if (result.success && zoneId && zoneName) {
-        logWateringStart(zoneId, zoneName, deviceId, "manual").catch((err) =>
-          console.error("Failed to log watering start:", err)
-        );
+        try {
+          wateringEventId = await logWateringStart(zoneId, zoneName, deviceId, "manual");
+        } catch (err) {
+          console.error("Failed to log watering start:", err);
+        }
       }
     } else if (action === "off") {
       result = await turnOffDevice(deviceId);
 
-      // Log watering end to database (fire and forget)
+      // Log watering end to database
       if (result.success && eventId) {
-        logWateringEnd(eventId).catch((err) =>
-          console.error("Failed to log watering end:", err)
-        );
+        try {
+          await logWateringEnd(eventId);
+        } catch (err) {
+          console.error("Failed to log watering end:", err);
+        }
       }
     } else {
       return NextResponse.json(
@@ -80,7 +85,7 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({ success: true, action });
+    return NextResponse.json({ success: true, action, eventId: wateringEventId });
   } catch (error) {
     console.error("Error controlling device:", error);
     return NextResponse.json(

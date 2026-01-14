@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getWateringHistory, getRecentWeatherSnapshots, getLastWateredForZones, isSupabaseConfigured } from "@/lib/supabase";
+import { getWateringHistory, getRecentWeatherSnapshots, getLastWateredForZones, closeStaleWateringEvents, isSupabaseConfigured } from "@/lib/supabase";
 
 export async function GET(request: Request) {
   try {
@@ -9,6 +9,10 @@ export async function GET(request: Request) {
         { status: 503 }
       );
     }
+
+    // Auto-close any stale watering events (started >4 hours ago without ending)
+    await closeStaleWateringEvents();
+
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get("limit") || "50");
     const zoneId = searchParams.get("zoneId") || undefined;

@@ -28,6 +28,7 @@ export interface WateringEvent {
   duration_seconds?: number;
   trigger: "manual" | "scheduled" | "automated";
   weather_snapshot_id?: string;
+  scheduled_end_at?: string;
   created_at: string;
 }
 
@@ -293,4 +294,140 @@ export async function getLastWateredForZones(): Promise<Record<string, string>> 
   }
 
   return lastWatered;
+}
+
+// Close stale watering events (started more than 4 hours ago without ending)
+export async function closeStaleWateringEvents(): Promise<number> {
+  if (!supabase) {
+    return 0;
+  }
+
+  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+  // Find stale events
+  const { data: staleEvents, error: findError } = await supabase
+    .from("watering_events")
+    .select("id, started_at")
+    .is("ended_at", null)
+    .lt("started_at", fourHoursAgo);
+
+  if (findError || !staleEvents || staleEvents.length === 0) {
+    return 0;
+  }
+
+  // Close each stale event with a reasonable duration estimate (assume 30 min)
+  let closedCount = 0;
+  for (const event of staleEvents) {
+    const startTime = new Date(event.started_at).getTime();
+    const estimatedEndTime = new Date(startTime + 30 * 60 * 1000); // 30 minutes after start
+    const durationSeconds = 30 * 60; // 30 minutes
+
+    const { error: updateError } = await supabase
+      .from("watering_events")
+      .update({
+        ended_at: estimatedEndTime.toISOString(),
+        duration_seconds: durationSeconds,
+      })
+      .eq("id", event.id);
+
+    if (!updateError) {
+      closedCount++;
+      console.log(`Auto-closed stale watering event ${event.id}`);
+    }
+  }
+
+  return closedCount;
+}
+
+// Start automated watering with scheduled end time
+export async function startScheduledWatering(
+  zoneId: string,
+  zoneName: string,
+  deviceId: string,
+  durationMinutes: number
+): Promise<string | null> {
+  if (!supabase) {
+    console.log("Supabase not configured, skipping scheduled watering log");
+    return null;
+  }
+
+  // First ensure the zone exists
+  const { error: zoneError } = await supabase
+    .from("zones")
+    .upsert({ id: zoneId, device_id: deviceId, name: zoneName }, { onConflict: "id" });
+
+  if (zoneError) {
+    console.error("Error upserting zone:", zoneError);
+  }
+
+  const startedAt = new Date();
+  const scheduledEndAt = new Date(startedAt.getTime() + durationMinutes * 60 * 1000);
+
+  // Create watering event with scheduled end time
+  const { data, error } = await supabase
+    .from("watering_events")
+    .insert({
+      zone_id: zoneId,
+      started_at: startedAt.toISOString(),
+      scheduled_end_at: scheduledEndAt.toISOString(),
+      trigger: "automated",
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("Error logging scheduled watering start:", error);
+    return null;
+  }
+
+  return data?.id || null;
+}
+
+// Get active watering events that should be stopped
+export async function getWateringToStop(): Promise<Array<{
+  id: string;
+  zone_id: string;
+  started_at: string;
+  scheduled_end_at: string;
+}>> {
+  if (!supabase) {
+    return [];
+  }
+
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("watering_events")
+    .select("id, zone_id, started_at, scheduled_end_at")
+    .is("ended_at", null)
+    .not("scheduled_end_at", "is", null)
+    .lt("scheduled_end_at", now);
+
+  if (error) {
+    console.error("Error fetching watering to stop:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Check if there's any active automated watering
+export async function hasActiveAutomatedWatering(zoneId: string): Promise<boolean> {
+  if (!supabase) {
+    return false;
+  }
+
+  const { data, error } = await supabase
+    .from("watering_events")
+    .select("id")
+    .eq("zone_id", zoneId)
+    .is("ended_at", null)
+    .limit(1);
+
+  if (error) {
+    console.error("Error checking active watering:", error);
+    return false;
+  }
+
+  return (data?.length || 0) > 0;
 }

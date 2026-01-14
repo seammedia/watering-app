@@ -94,16 +94,21 @@ export async function POST(request: Request) {
     const { messages }: { messages: ChatMessage[] } = await request.json();
 
     if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY not found in environment");
       return NextResponse.json(
         { error: "Gemini API key not configured" },
         { status: 503 }
       );
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
     // Get system context with real-time data
     const systemContext = await getSystemContext();
+
+    // Create model with system instruction
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash-exp",
+      systemInstruction: systemContext,
+    });
 
     // Build conversation history for Gemini
     const chat = model.startChat({
@@ -111,7 +116,6 @@ export async function POST(request: Request) {
         role: msg.role === "user" ? "user" : "model",
         parts: [{ text: msg.content }],
       })),
-      systemInstruction: systemContext,
     });
 
     // Get the latest user message
@@ -124,8 +128,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ response });
   } catch (error) {
     console.error("Chat API error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("Error details:", errorMessage);
     return NextResponse.json(
-      { error: "Failed to generate response" },
+      { error: `Failed to generate response: ${errorMessage}` },
       { status: 500 }
     );
   }
