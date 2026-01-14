@@ -158,6 +158,18 @@ async function fetchWeatherData(): Promise<unknown> {
   return null;
 }
 
+// Check if current time is within allowed watering hours (6 AM - 10 PM Melbourne time)
+function isWithinWateringHours(): { allowed: boolean; currentHour: number } {
+  const now = new Date();
+  // Convert to Melbourne time
+  const melbourneTime = new Date(now.toLocaleString("en-US", { timeZone: "Australia/Melbourne" }));
+  const currentHour = melbourneTime.getHours();
+
+  // Allow watering between 6 AM (6) and 10 PM (22)
+  const allowed = currentHour >= 6 && currentHour < 22;
+  return { allowed, currentHour };
+}
+
 export async function GET(request: Request) {
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -170,6 +182,20 @@ export async function GET(request: Request) {
   };
 
   try {
+    // Check if within allowed watering hours
+    const { allowed, currentHour } = isWithinWateringHours();
+    if (!allowed) {
+      log(`Outside watering hours (current hour: ${currentHour}, allowed: 6 AM - 10 PM Melbourne time)`);
+      return NextResponse.json({
+        success: true,
+        action: "skipped",
+        reason: `Outside watering hours (${currentHour}:00). Watering only allowed 6 AM - 10 PM.`,
+        currentHour,
+        logs,
+      });
+    }
+
+    log(`Within watering hours (${currentHour}:00 Melbourne time)`);
     log("Starting AI-powered moisture check");
 
     // Check if watering is already in progress
