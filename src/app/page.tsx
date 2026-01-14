@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
+import PinLock from "@/components/PinLock";
 
 const FRONT_TAP_DEVICE_ID = "bf9d467329b87e8748kbam";
 
@@ -414,6 +415,7 @@ export default function Dashboard() {
   ];
 
   return (
+    <PinLock>
     <div className="min-h-screen bg-[#f5f0e8] lg:flex">
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-[#1a1a2e] text-white p-4 flex items-center justify-between shadow-lg">
@@ -1582,5 +1584,6 @@ export default function Dashboard() {
         )}
       </main>
     </div>
+    </PinLock>
   );
 }
