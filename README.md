@@ -1,6 +1,6 @@
 # The Water App - Smart Garden
 
-A self-hosted smart garden watering control system built with Next.js and deployed on Vercel. Features a modern bento-box dashboard design, AI-powered garden assistant, weather integration, and watering history tracking.
+A self-hosted smart garden watering control system built with Next.js and deployed on Vercel. Features AI-powered automated watering using Gemini, soil moisture monitoring, weather integration, and a modern bento-box dashboard design.
 
 **Live App**: [watering-app.vercel.app](https://watering-app.vercel.app)
 
@@ -15,8 +15,26 @@ A self-hosted smart garden watering control system built with Next.js and deploy
 - **Real-time Status** - Device connection status, active zones count
 - **Property Map** - Interactive satellite view with clickable watering zones
 - **Weather Widget** - Current temperature and conditions at a glance
+- **Soil Moisture Display** - Real-time moisture readings from Zigbee sensor
 - **Statistics Cards** - Weekly events, total watering time
-- **Recent Activity Feed** - Latest watering events
+
+### AI-Powered Automated Watering
+- **Gemini AI Decision Making** - AI analyzes soil moisture, weather, and plant needs
+- **Smart Scheduling** - Runs every 4 hours via cron job
+- **Contextual Analysis** - Considers plant type, age, recent rainfall, forecast
+- **Time Restrictions** - Only waters between 6 AM - 10 PM
+- **Safety Limits** - Maximum 45 minutes per session
+
+### Soil Sensor Integration
+- **Real-time Monitoring** - Live soil moisture percentage
+- **Temperature Tracking** - Soil temperature readings
+- **Battery Status** - Sensor battery level monitoring
+- **Zone Linking** - Moisture data linked to watering zones
+
+### Security
+- **PIN Lock** - 6-digit PIN required to access app
+- **Remember Browser** - Optional persistent authentication
+- **Cron Authentication** - Bearer token protection for API endpoints
 
 ### Pages
 - **Dashboard** - Main control center with bento grid layout
@@ -24,7 +42,7 @@ A self-hosted smart garden watering control system built with Next.js and deploy
 - **Weather** - 7-day forecast with detailed conditions
 - **Rainfall** - Precipitation tracking and watering recommendations
 - **History** - Complete watering event log with statistics
-- **Soil** - Soil sensor integration (coming soon)
+- **Soil** - Real-time soil sensor data display
 
 ### Mobile Responsive
 - **Slide-out Menu** - Hidden sidebar that slides in on mobile
@@ -46,7 +64,8 @@ A self-hosted smart garden watering control system built with Next.js and deploy
 | **Weather** | Open-Meteo API |
 | **IoT** | Tuya Cloud API |
 | **Hosting** | Vercel |
-| **Hardware** | Zigbee smart water tap (SmartLife/Tuya) |
+| **Cron Jobs** | cron-job.org |
+| **Hardware** | Zigbee smart water tap + soil sensor (SmartLife/Tuya) |
 
 ---
 
@@ -62,20 +81,30 @@ watering-app/
 │   │   └── api/
 │   │       ├── chat/
 │   │       │   └── route.ts            # Gemini AI chat endpoint
+│   │       ├── cron/
+│   │       │   ├── auto-water/
+│   │       │   │   └── route.ts        # AI-powered auto watering
+│   │       │   └── water-check/
+│   │       │       └── route.ts        # Stop watering when scheduled
 │   │       ├── device/
 │   │       │   └── [deviceId]/
 │   │       │       └── route.ts        # Tuya device control
 │   │       ├── history/
 │   │       │   └── route.ts            # Watering history from Supabase
+│   │       ├── soil-sensor/
+│   │       │   └── route.ts            # Soil sensor data
 │   │       └── weather/
 │   │           └── route.ts            # Open-Meteo weather API
+│   ├── components/
+│   │   └── PinLock.tsx                 # PIN authentication component
 │   └── lib/
 │       ├── tuya.ts                     # Tuya API client with HMAC auth
 │       └── supabase.ts                 # Supabase client
 ├── public/
-│   ├── logo.png                        # App logo (water drop + gear)
+│   ├── logo.png                        # App logo
 │   ├── property-map.png                # Property satellite image
 │   └── manifest.json                   # PWA manifest
+├── vercel.json                         # Vercel configuration
 └── .env.local                          # Environment variables (not committed)
 ```
 
@@ -95,8 +124,11 @@ TUYA_API_ENDPOINT=https://openapi.tuyaeu.com
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
-# Google Gemini (AI Chat)
+# Google Gemini (AI Chat & Auto Watering)
 GEMINI_API_KEY=your_gemini_api_key
+
+# Cron Job Authentication
+CRON_SECRET=your_random_secret_string
 ```
 
 ### Setup Instructions
@@ -128,17 +160,127 @@ CREATE TABLE watering_events (
   started_at TIMESTAMPTZ NOT NULL,
   ended_at TIMESTAMPTZ,
   duration_seconds INTEGER,
-  trigger TEXT DEFAULT 'manual',
+  trigger TEXT DEFAULT 'manual',  -- 'manual', 'scheduled', 'automated'
+  scheduled_end_at TIMESTAMPTZ,   -- For automated watering stop time
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Soil readings (optional - for historical tracking)
+CREATE TABLE soil_readings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  zone_id TEXT REFERENCES zones(id),
+  moisture_percent INTEGER NOT NULL,
+  temperature DECIMAL,
+  captured_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-### Insert Initial Zone
+### Initial Setup SQL
 
 ```sql
+-- Add zone
 INSERT INTO zones (id, device_id, name, plant_type, plant_date)
 VALUES ('zone-1', 'bf9d467329b87e8748kbam', 'Front Right Garden Hedges', 'Leighton Greens', '2025-12-13');
+
+-- Add scheduled_end_at column (if upgrading)
+ALTER TABLE watering_events
+ADD COLUMN IF NOT EXISTS scheduled_end_at TIMESTAMPTZ;
 ```
+
+---
+
+## Automated Watering System
+
+### How It Works
+
+1. **Cron job runs every 4 hours** (via cron-job.org)
+2. **Time check** - Only proceeds between 6 AM - 10 PM Melbourne time
+3. **Soil sensor reading** - Gets current moisture percentage
+4. **Gemini AI analysis** - Sends data to AI with context:
+   - Current moisture level
+   - Plant type and age
+   - Weather conditions and forecast
+   - Recent rainfall
+   - Watering history
+5. **AI decision** - Returns whether to water and for how long
+6. **Execution** - Turns on tap for recommended duration
+7. **Auto-stop** - Water-check cron turns off tap when scheduled time reached
+
+### Gemini AI Decision Factors
+
+```
+WATERING GUIDELINES FOR YOUNG LEIGHTON GREENS:
+- Optimal soil moisture: 30-40%
+- Below 25%: Soil too dry, needs immediate watering
+- 25-35%: Getting dry, consider watering
+- 35-45%: Good moisture level
+- Above 45%: Well hydrated, no watering needed
+```
+
+### Example AI Response
+
+```json
+{
+  "shouldWater": true,
+  "durationMinutes": 30,
+  "reason": "Soil moisture at 27% is below optimal range. No rain forecast for 3 days.",
+  "confidence": "high"
+}
+```
+
+### Cron Job Setup (cron-job.org)
+
+**Job 1: Auto Water Check** (every 4 hours)
+- URL: `https://watering-app.vercel.app/api/cron/auto-water`
+- Schedule: `0 */4 * * *`
+- Headers: `Authorization: Bearer YOUR_CRON_SECRET`
+
+**Job 2: Water Stop Check** (every minute)
+- URL: `https://watering-app.vercel.app/api/cron/water-check`
+- Schedule: `* * * * *`
+- Headers: `Authorization: Bearer YOUR_CRON_SECRET`
+
+### Why External Cron?
+
+Vercel Hobby accounts only allow daily cron jobs. Using cron-job.org (free) allows:
+- More frequent execution (every 4 hours, every minute)
+- Custom scheduling
+- Execution history and logs
+
+---
+
+## Hardware Setup
+
+### Devices
+
+| Device | Device ID | Purpose |
+|--------|-----------|---------|
+| Front Tap | `bf9d467329b87e8748kbam` | ZigBee smart water valve |
+| Soil Sensor | `bf455b6fdac1b8d5b9kagj` | Soil moisture/temperature sensor |
+| Gateway | `bf727c0aae995a8336yjmf` | GW002 ZigBee hub |
+
+### SmartLife App Configuration
+
+**Important: Auto-Off Timer Setting**
+
+The smart tap has a built-in auto-off timer that overrides API commands. Configure it to be longer than max watering duration:
+
+1. Open SmartLife app
+2. Tap on the water tap device
+3. Find "Irrigation Duration" setting
+4. Set to **1 hour 10 minutes** (70 min)
+
+This acts as a safety backup - the API will stop watering at 30-45 min, but if it fails, the tap auto-stops at 70 min.
+
+### Tuya Developer Platform Setup
+
+1. Create project at [iot.tuya.com](https://iot.tuya.com)
+2. Link SmartLife account under "Devices" > "Link App Account"
+3. Subscribe to required APIs under "Service API":
+   - Device Control
+   - Device Status
+4. Note your Access ID and Secret
+5. Match API endpoint to your data center (Australia uses EU endpoint)
 
 ---
 
@@ -146,22 +288,23 @@ VALUES ('zone-1', 'bf9d467329b87e8748kbam', 'Front Right Garden Hedges', 'Leight
 
 ### 1. Tuya Cloud API (Device Control)
 
-Controls Zigbee smart water taps via Tuya's REST API.
+Controls Zigbee devices via Tuya's REST API.
 
 **Authentication**: HMAC-SHA256 signature-based
-- Get access token: `GET /v1.0/token?grant_type=1`
-- Sign requests with: `client_id + access_token + timestamp + stringToSign`
 
 **Endpoints Used**:
 - `GET /v1.0/devices/{device_id}` - Get device status
 - `POST /v1.0/devices/{device_id}/commands` - Send commands
 
-**Command Format**:
-```json
-{
-  "commands": [{ "code": "switch", "value": true }]
-}
+**Soil Sensor Status Codes**:
+```typescript
+// Common codes (vary by manufacturer)
+const moistureCodes = ["humidity", "soil_humidity", "humidity_value", "moisture"];
+const temperatureCodes = ["temp_current", "temperature", "temp_value"];
+const batteryCodes = ["battery_percentage", "battery_state", "va_battery"];
 ```
+
+**Tip**: Use "Debug Device" in Tuya platform to see actual status codes for your specific device.
 
 ### 2. Open-Meteo API (Weather)
 
@@ -169,79 +312,28 @@ Free weather API - no API key required.
 
 **Endpoint**: `https://api.open-meteo.com/v1/forecast`
 
-**Parameters**:
-```
-latitude=-38.1833
-longitude=145.1000
-current=temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m
-hourly=precipitation
-daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max
-past_days=7
-forecast_days=7
-timezone=Australia/Melbourne
-```
-
 **Features**:
 - Current conditions (temp, humidity, wind, precipitation)
 - 7-day forecast with precipitation probability
 - Last 7 days rainfall totals
-- Weather code to description mapping
-- Smart watering recommendations based on recent rainfall
+- Smart watering recommendations
 
-### 3. Google Gemini API (AI Chat)
+### 3. Google Gemini API (AI)
 
-Garden assistant powered by Gemini 2.0 Flash.
+Powers both chat assistant and automated watering decisions.
 
-**Endpoint**: Google Generative AI SDK
+**Model**: `gemini-2.0-flash-exp`
 
-**System Prompt Context**:
-- Garden location (Mount Eliza, Victoria, Australia)
-- Zone information (plant types, dates)
+**Chat Context Includes**:
+- Garden location and zone info
+- Plant types and planting dates
 - Current weather conditions
 - Recent watering history
-- Watering statistics
-
-**Example Queries**:
-- "When did I last water?"
-- "Should I water today?"
-- "Care tips for Leighton Greens"
-- "How much rain have we had?"
+- Soil moisture readings
 
 ### 4. Supabase (Database)
 
-PostgreSQL database for watering history.
-
-**Features**:
-- Tracks watering events (start, end, duration)
-- Stores zone configuration
-- Calculates statistics (total events, avg duration, weekly count)
-- Real-time last watered timestamps
-
----
-
-## UI/UX Design
-
-### Design Principles
-- **Bento Grid Layout** - Asymmetric card grid like modern dashboards
-- **Warm Color Palette** - Cream background (#f5f0e8), earth tones
-- **Soft Shadows** - Subtle depth with colored shadow glows
-- **Extra Rounded Corners** - `rounded-3xl` and `rounded-2xl` throughout
-- **Gradient Buttons** - Blue/red gradients with shadow effects
-
-### Color Scheme
-```css
---background: #f5f0e8;        /* Warm cream */
---sidebar: #1a1a2e → #16213e; /* Dark gradient */
---status-online: #10b981;     /* Emerald */
---weather: #0ea5e9;           /* Sky blue */
---stats-beige: #e8d5c4;       /* Warm beige */
---stats-green: #d4e5d7;       /* Soft green */
-```
-
-### Responsive Breakpoints
-- **Mobile**: < 768px - Single column, slide-out menu
-- **Tablet**: 768px-1024px - 2 column grid
-- **Desktop**: > 1024px - 4 column grid, fixed sidebar
+PostgreSQL database for watering history and soil readings.
 
 ---
 
@@ -284,72 +376,67 @@ Tuya uses complex HMAC-SHA256 signature authentication:
 |-----------------|--------------|
 | Australia | `https://openapi.tuyaeu.com` (Central Europe) |
 | USA West | `https://openapi.tuyaus.com` |
-| USA East | `https://openapi-ueaz.tuyaus.com` |
 | Europe | `https://openapi.tuyaeu.com` |
 | India | `https://openapi.tuyain.com` |
 | China | `https://openapi.tuyacn.com` |
 
-### Weather Code Mapping
+### Soil Sensor Discovery
+
+When adding a new soil sensor:
+1. Add device to SmartLife app
+2. Wait for it to appear in Tuya Developer Platform (may take a few minutes)
+3. If not appearing, re-link your SmartLife account under "Link App Account"
+4. Use "Debug Device" to discover the actual status codes
+
+### SmartLife Auto-Off Timer Issue
+
+**Problem**: Water stops before scheduled duration
+**Cause**: SmartLife tap has built-in auto-off timer (default often 10 min)
+**Solution**: Set auto-off timer to longer than max watering duration (e.g., 70 min)
+
+### Vercel Hobby Cron Limitations
+
+Vercel Hobby accounts only allow daily cron jobs (`0 0 * * *`). For more frequent execution:
+- Use external cron service (cron-job.org is free)
+- Or upgrade to Vercel Pro
+
+### Time Zone Handling for Cron
 
 ```typescript
-const weatherDescriptions: Record<number, string> = {
-  0: "Clear sky",
-  1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-  45: "Foggy", 48: "Depositing rime fog",
-  51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-  61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-  71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
-  80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-  95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail"
-};
+// Convert to Melbourne time for watering hour check
+const melbourneTime = new Date(now.toLocaleString("en-US", {
+  timeZone: "Australia/Melbourne"
+}));
+const currentHour = melbourneTime.getHours();
+const allowed = currentHour >= 6 && currentHour < 22; // 6 AM - 10 PM
 ```
 
-### Watering Recommendation Logic
+### Closing Stale Watering Events
 
+If watering events get stuck "In progress":
+```sql
+UPDATE watering_events
+SET ended_at = NOW(), duration_seconds = 900
+WHERE ended_at IS NULL AND trigger = 'automated';
+```
+
+---
+
+## Security
+
+### PIN Lock
+
+The app is protected with a 6-digit PIN:
+- PIN stored in component (for personal use)
+- "Remember browser" saves auth to localStorage
+- Checking auth shows loading spinner to prevent flash
+
+### Cron Endpoint Protection
+
+Cron endpoints verify Bearer token:
 ```typescript
-// Recommend watering if:
-// - No rain in last 24h AND no rain forecast AND last 7 days < 10mm
-// - OR last 7 days < 5mm (very dry)
-
-// Skip watering if:
-// - Rain in last 24h > 5mm
-// - OR rain forecast > 50% with > 5mm expected
-// - OR last 7 days > 25mm
-```
-
-### Mobile Sidebar Pattern
-
-```tsx
-// State for mobile menu
-const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-// Sidebar classes for slide-in effect
-<aside className={`
-  fixed lg:relative h-full z-50
-  transition-all duration-300
-  ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-  lg:translate-x-0
-`}>
-```
-
-### Supabase Event Tracking
-
-```typescript
-// Start watering - create event
-const { data } = await supabase
-  .from('watering_events')
-  .insert({ zone_id, started_at: new Date().toISOString(), trigger: 'manual' })
-  .select()
-  .single();
-
-// Stop watering - update event with end time
-await supabase
-  .from('watering_events')
-  .update({
-    ended_at: new Date().toISOString(),
-    duration_seconds: Math.floor((endTime - startTime) / 1000)
-  })
-  .eq('id', eventId);
+const authHeader = request.headers.get("authorization");
+const isValid = authHeader === `Bearer ${process.env.CRON_SECRET}`;
 ```
 
 ---
@@ -415,36 +502,19 @@ npm run lint
 - [x] Gemini AI garden assistant
 - [x] PWA manifest for home screen install
 - [x] Deploy to Vercel
+- [x] Zigbee soil moisture sensor integration
+- [x] Automated AI-powered watering
+- [x] Cron job setup with cron-job.org
+- [x] PIN lock with remember browser
+- [x] Time-restricted watering (6 AM - 10 PM)
 
 ### Planned
-- [ ] Zigbee soil moisture sensor integration
-- [ ] Automated watering schedules/timers
-- [ ] Push notifications for watering reminders
+- [ ] Push notifications for watering events
 - [ ] Multiple zone support (front, back, sides)
 - [ ] Water usage tracking/estimation
 - [ ] Historical charts and graphs
 - [ ] Dark mode support
 - [ ] Offline PWA support with sync
-
----
-
-## Hardware
-
-### Current Setup
-- **Device**: ZigBee Smart Water Tap (Tuya-compatible)
-- **Connection**: SmartLife app → Tuya Cloud
-- **Zone**: Front Right Garden Hedges
-- **Plants**: Leighton Green hedges (planted Dec 2025)
-
-### Device Info
-- **Device ID**: `bf9d467329b87e8748kbam`
-- **Control Code**: `switch` (boolean on/off)
-- **Status Refresh**: Every 30 seconds
-
-### Planned Additions
-- ZigBee Soil Moisture Sensors
-- Additional water taps for multiple zones
-- Flow meter for water usage tracking
 
 ---
 
