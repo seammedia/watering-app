@@ -1,30 +1,30 @@
 import { NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getDeviceStatus, turnOnDevice } from "@/lib/tuya";
 import {
   startScheduledWatering,
   hasActiveAutomatedWatering,
   logSoilReading,
+  getWateringHistory,
+  getLastWateredForZones,
 } from "@/lib/supabase";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 const SOIL_SENSOR_DEVICE_ID = "bf455b6fdac1b8d5b9kagj";
 const FRONT_TAP_DEVICE_ID = "bf9d467329b87e8748kbam";
 const ZONE_ID = "zone-1";
 const ZONE_NAME = "Front Right Garden Hedges";
 
-// Moisture thresholds
-const OPTIMAL_MOISTURE = 50; // Above this = no watering needed
-const VERY_DRY_MOISTURE = 25; // Below this = longer watering needed
-
-// Watering durations (in minutes)
-const DEFAULT_WATERING_DURATION = 30;
-const MAX_WATERING_DURATION = 45;
+// Watering constraints
+const MAX_WATERING_DURATION = 45; // Never water longer than this
+const MIN_WATERING_DURATION = 10; // Minimum watering time if needed
 
 // Verify cron secret to prevent unauthorized access
 function verifyCronSecret(request: Request): boolean {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  // If no CRON_SECRET is set, allow the request (for testing)
   if (!cronSecret) {
     console.warn("CRON_SECRET not set - allowing request without auth");
     return true;
@@ -33,8 +33,132 @@ function verifyCronSecret(request: Request): boolean {
   return authHeader === `Bearer ${cronSecret}`;
 }
 
+interface WateringDecision {
+  shouldWater: boolean;
+  durationMinutes: number;
+  reason: string;
+  confidence: "high" | "medium" | "low";
+}
+
+async function getAIWateringDecision(
+  moisture: number,
+  temperature: number | null,
+  weatherData: unknown,
+  lastWateredDaysAgo: number | null,
+  recentHistory: unknown[]
+): Promise<WateringDecision> {
+  if (!process.env.GEMINI_API_KEY) {
+    // Fallback to simple logic if no API key
+    const shouldWater = moisture < 35;
+    return {
+      shouldWater,
+      durationMinutes: shouldWater ? 30 : 0,
+      reason: "Gemini API not configured - using fallback threshold of 35%",
+      confidence: "low",
+    };
+  }
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash-exp",
+  });
+
+  const prompt = `You are an expert gardener analyzing soil moisture data for automated watering.
+
+PLANT INFORMATION:
+- Plant: Leighton Green hedges (Cupressocyparis leylandii)
+- Location: Mount Eliza, Victoria, Australia
+- Planted: 13/12/2025 (about 1 month old - still establishing)
+- Zone: Front Right Garden Hedges
+
+CURRENT CONDITIONS:
+- Soil Moisture: ${moisture}%
+- Soil Temperature: ${temperature !== null ? `${temperature}°C` : "Unknown"}
+- Last Watered: ${lastWateredDaysAgo !== null ? `${lastWateredDaysAgo} days ago` : "Unknown"}
+
+WEATHER DATA:
+${JSON.stringify(weatherData, null, 2)}
+
+RECENT WATERING HISTORY (last 5 events):
+${JSON.stringify(recentHistory.slice(0, 5), null, 2)}
+
+WATERING GUIDELINES FOR YOUNG LEIGHTON GREENS:
+- Optimal soil moisture for newly planted hedges: 30-40%
+- Below 25%: Soil is too dry, needs immediate watering
+- 25-35%: Getting dry, consider watering
+- 35-45%: Good moisture level
+- Above 45%: Well hydrated, no watering needed
+- Young plants (under 6 months) need consistent moisture to establish roots
+- Water deeply but not too frequently to encourage deep root growth
+
+CONSTRAINTS:
+- Maximum watering duration: ${MAX_WATERING_DURATION} minutes
+- Minimum watering duration: ${MIN_WATERING_DURATION} minutes
+- Consider recent rainfall - don't water if significant rain recently
+- Consider forecast - don't water if heavy rain expected soon
+
+Based on all this information, should the automated system water now?
+
+Respond in JSON format only:
+{
+  "shouldWater": true/false,
+  "durationMinutes": number (0 if not watering, ${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} if watering),
+  "reason": "Brief explanation of your decision",
+  "confidence": "high/medium/low"
+}`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+
+    // Extract JSON from response (handle markdown code blocks)
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("No JSON found in response");
+    }
+
+    const decision = JSON.parse(jsonMatch[0]) as WateringDecision;
+
+    // Enforce constraints
+    if (decision.durationMinutes > MAX_WATERING_DURATION) {
+      decision.durationMinutes = MAX_WATERING_DURATION;
+    }
+    if (decision.shouldWater && decision.durationMinutes < MIN_WATERING_DURATION) {
+      decision.durationMinutes = MIN_WATERING_DURATION;
+    }
+
+    return decision;
+  } catch (error) {
+    console.error("Gemini API error:", error);
+    // Fallback logic
+    const shouldWater = moisture < 30;
+    return {
+      shouldWater,
+      durationMinutes: shouldWater ? 30 : 0,
+      reason: `AI analysis failed, using fallback: moisture ${moisture}% ${shouldWater ? "below" : "above"} 30% threshold`,
+      confidence: "low",
+    };
+  }
+}
+
+async function fetchWeatherData(): Promise<unknown> {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : process.env.NEXT_PUBLIC_VERCEL_URL
+        ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
+        : "http://localhost:3000";
+
+    const response = await fetch(`${baseUrl}/api/weather`);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (error) {
+    console.error("Failed to fetch weather:", error);
+  }
+  return null;
+}
+
 export async function GET(request: Request) {
-  // Verify this is a legitimate cron request
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -46,7 +170,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    log("Starting automated moisture check");
+    log("Starting AI-powered moisture check");
 
     // Check if watering is already in progress
     const isWatering = await hasActiveAutomatedWatering(ZONE_ID);
@@ -85,16 +209,11 @@ export async function GET(request: Request) {
     };
 
     const moisture = getStatusValue(["humidity", "soil_humidity", "humidity_value", "moisture"]);
-    const temperature = getStatusValue(["temp_current", "temperature", "temp_value"]);
+    const temperatureRaw = getStatusValue(["temp_current", "temperature", "temp_value"]);
+    const temperature = temperatureRaw !== null ? temperatureRaw / 10 : null;
 
-    log(`Current moisture: ${moisture}%, temperature: ${temperature !== null ? temperature / 10 : 'N/A'}°C`);
+    log(`Current moisture: ${moisture}%, temperature: ${temperature !== null ? temperature + "°C" : "N/A"}`);
 
-    // Log the soil reading to database
-    if (moisture !== null) {
-      await logSoilReading(ZONE_ID, moisture, temperature !== null ? temperature / 10 : undefined);
-    }
-
-    // Check if watering is needed
     if (moisture === null) {
       log("Could not read moisture level");
       return NextResponse.json({
@@ -104,26 +223,48 @@ export async function GET(request: Request) {
       }, { status: 500 });
     }
 
-    if (moisture >= OPTIMAL_MOISTURE) {
-      log(`Moisture ${moisture}% is at or above optimal (${OPTIMAL_MOISTURE}%), no watering needed`);
+    // Log the soil reading to database
+    await logSoilReading(ZONE_ID, moisture, temperature ?? undefined);
+
+    // Gather context for AI decision
+    const [weatherData, history, lastWateredMap] = await Promise.all([
+      fetchWeatherData(),
+      getWateringHistory(10, ZONE_ID),
+      getLastWateredForZones(),
+    ]);
+
+    // Calculate days since last watered
+    let lastWateredDaysAgo: number | null = null;
+    const lastWatered = lastWateredMap[ZONE_ID];
+    if (lastWatered) {
+      const lastDate = new Date(lastWatered);
+      lastWateredDaysAgo = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+    }
+
+    log(`Last watered: ${lastWateredDaysAgo !== null ? lastWateredDaysAgo + " days ago" : "unknown"}`);
+
+    // Get AI decision
+    log("Consulting Gemini AI for watering decision...");
+    const decision = await getAIWateringDecision(
+      moisture,
+      temperature,
+      weatherData,
+      lastWateredDaysAgo,
+      history
+    );
+
+    log(`AI Decision: shouldWater=${decision.shouldWater}, duration=${decision.durationMinutes}min, confidence=${decision.confidence}`);
+    log(`AI Reason: ${decision.reason}`);
+
+    if (!decision.shouldWater) {
       return NextResponse.json({
         success: true,
         action: "none",
-        reason: `Moisture ${moisture}% is optimal`,
         moisture,
+        temperature,
+        aiDecision: decision,
         logs,
       });
-    }
-
-    // Determine watering duration based on how dry the soil is
-    let duration = DEFAULT_WATERING_DURATION;
-    if (moisture < VERY_DRY_MOISTURE) {
-      // Very dry - use maximum duration
-      duration = MAX_WATERING_DURATION;
-      log(`Soil is very dry (${moisture}%), using maximum duration of ${duration} minutes`);
-    } else {
-      // Moderately dry - use default duration
-      log(`Soil is moderately dry (${moisture}%), using default duration of ${duration} minutes`);
     }
 
     // Check if the tap is online
@@ -134,12 +275,13 @@ export async function GET(request: Request) {
         success: false,
         error: "Front tap is offline",
         details: tapError,
+        aiDecision: decision,
         logs,
       }, { status: 500 });
     }
 
     // Turn on the water
-    log(`Turning on water for ${duration} minutes`);
+    log(`Turning on water for ${decision.durationMinutes} minutes`);
     const turnOnResult = await turnOnDevice(FRONT_TAP_DEVICE_ID);
 
     if (!turnOnResult.success) {
@@ -148,21 +290,23 @@ export async function GET(request: Request) {
         success: false,
         error: "Failed to turn on water",
         details: turnOnResult.error,
+        aiDecision: decision,
         logs,
       }, { status: 500 });
     }
 
     // Log the scheduled watering to database
-    const eventId = await startScheduledWatering(ZONE_ID, ZONE_NAME, FRONT_TAP_DEVICE_ID, duration);
-    log(`Watering started, event ID: ${eventId}, scheduled to stop in ${duration} minutes`);
+    const eventId = await startScheduledWatering(ZONE_ID, ZONE_NAME, FRONT_TAP_DEVICE_ID, decision.durationMinutes);
+    log(`Watering started, event ID: ${eventId}, scheduled to stop in ${decision.durationMinutes} minutes`);
 
     return NextResponse.json({
       success: true,
       action: "started",
       moisture,
-      duration,
+      temperature,
+      aiDecision: decision,
       eventId,
-      scheduledEndTime: new Date(Date.now() + duration * 60 * 1000).toISOString(),
+      scheduledEndTime: new Date(Date.now() + decision.durationMinutes * 60 * 1000).toISOString(),
       logs,
     });
 
