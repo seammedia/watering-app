@@ -23,7 +23,8 @@ A self-hosted smart garden watering control system built with Next.js and deploy
 - **Smart Scheduling** - Runs every 4 hours via cron job
 - **Contextual Analysis** - Considers plant type, age, recent rainfall, forecast
 - **Time Restrictions** - Only waters between 6 AM - 10 PM
-- **Safety Limits** - Maximum 45 minutes per session
+- **Safety Limits** - 30-60 minutes per session (deep watering only)
+- **Frequency Control** - Maximum 2-3 waterings per week to encourage root growth
 
 ### Soil Sensor Integration
 - **Real-time Monitoring** - Live soil moisture percentage
@@ -208,13 +209,32 @@ ADD COLUMN IF NOT EXISTS scheduled_end_at TIMESTAMPTZ;
 
 ### Gemini AI Decision Factors
 
+The AI receives strict rules it must follow:
+
 ```
-WATERING GUIDELINES FOR YOUNG LEIGHTON GREENS:
-- Optimal soil moisture: 30-40%
-- Below 25%: Soil too dry, needs immediate watering
-- 25-35%: Getting dry, consider watering
-- 35-45%: Good moisture level
-- Above 45%: Well hydrated, no watering needed
+=== STRICT RULES (MUST FOLLOW) ===
+
+RULE 1 - WATERING FREQUENCY: Water ONLY 2-3 times per week, NOT daily.
+- Tracks waterings in the past 7 days
+- If already watered 3+ times this week, DO NOT WATER unless soil is critically dry (<20%)
+- If watered yesterday or today, DO NOT WATER again unless emergency
+
+RULE 2 - DURATION: If watering, MUST be between 30-60 minutes.
+- NEVER suggest less than 30 minutes
+- Short waterings (under 30 min) create shallow roots - this is BAD
+- Deep watering encourages root growth - this is the goal
+
+RULE 3 - SKIP WATERING if any of these are true:
+- Already watered 3+ times this week
+- Watered within the last 2 days AND soil moisture > 25%
+- Rain expected in next 24 hours
+- Soil moisture > 40%
+
+=== SOIL MOISTURE GUIDELINES ===
+- Below 20%: CRITICAL - water immediately (30-60 min)
+- 20-30%: Dry - water if not watered in last 2 days (30-60 min)
+- 30-40%: Adequate - only water if last watering was 3+ days ago
+- Above 40%: Good - DO NOT water
 ```
 
 ### Example AI Response
@@ -420,6 +440,59 @@ SET ended_at = NOW(), duration_seconds = 900
 WHERE ended_at IS NULL AND trigger = 'automated';
 ```
 
+### Deep Watering Philosophy
+
+**Problem**: Short, frequent watering (10-20 min) creates shallow root systems that make plants dependent on constant irrigation.
+
+**Solution**: Always water deeply (30-60 min), less frequently (2-3x per week max).
+
+**Benefits**:
+- Deep roots make plants more drought-resistant
+- Reduces overall water usage (fewer watering events)
+- Plants can survive longer between waterings
+- Healthier, more established plants
+
+**Implementation**:
+- `MIN_WATERING_DURATION = 30` - Enforces minimum 30 minutes
+- `MAX_WATERING_DURATION = 60` - Maximum cap at 60 minutes
+- `TARGET_WATERINGS_PER_WEEK = 3` - Track and limit weekly frequency
+- AI prompt uses strict numbered rules (not soft guidelines)
+- Code enforces duration constraints even if AI ignores them
+- Fallback logic also defaults to 30 minutes
+
+### AI Prompt Engineering for Automated Tasks
+
+**Problem**: When using AI (Gemini) for automated decisions, soft guidelines like "prefer deep watering" and "try to water 2x per week" are often ignored. The AI would water daily for 20-25 minutes instead of following the intended philosophy.
+
+**Solution**: Use explicit, numbered rules with strict language:
+
+1. **Numbered rules**: "RULE 1", "RULE 2", etc. make rules harder to ignore
+2. **Explicit constraints**: "MUST be between 30-60 minutes" not "aim for 30-45 minutes"
+3. **Negative examples**: "Short waterings create shallow roots - this is BAD"
+4. **Provide concrete data**: Pass in "waterings this week: 3" so AI has facts to work with
+5. **Multiple skip conditions**: List all reasons to NOT water, not just when TO water
+6. **Code enforcement**: Always enforce constraints in code even if AI returns wrong values:
+   ```typescript
+   if (decision.shouldWater && decision.durationMinutes < MIN_WATERING_DURATION) {
+     decision.durationMinutes = MIN_WATERING_DURATION;
+   }
+   ```
+
+**Before** (soft guidelines - AI ignored):
+```
+- ALWAYS water deeply (30-45 minutes) rather than short frequent waterings
+- Goal: Water thoroughly only 2 times per week maximum
+```
+
+**After** (strict rules - AI follows):
+```
+RULE 1 - WATERING FREQUENCY: Water ONLY 2-3 times per week, NOT daily.
+- If already watered 3+ times this week, DO NOT WATER unless soil is critically dry (<20%)
+
+RULE 2 - DURATION: If watering, MUST be between 30-60 minutes.
+- NEVER suggest less than 30 minutes
+```
+
 ---
 
 ## Security
@@ -507,6 +580,8 @@ npm run lint
 - [x] Cron job setup with cron-job.org
 - [x] PIN lock with remember browser
 - [x] Time-restricted watering (6 AM - 10 PM)
+- [x] Deep watering philosophy (30-60 min sessions, 2-3x/week max)
+- [x] AI prompt engineering with strict rules for reliable automation
 
 ### Planned
 - [ ] Push notifications for watering events
