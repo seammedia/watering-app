@@ -16,9 +16,10 @@ const FRONT_TAP_DEVICE_ID = "bf9d467329b87e8748kbam";
 const ZONE_ID = "zone-1";
 const ZONE_NAME = "Front Right Garden Hedges";
 
-// Watering constraints
-const MAX_WATERING_DURATION = 45; // Never water longer than this
-const MIN_WATERING_DURATION = 10; // Minimum watering time if needed
+// Watering constraints - deep watering philosophy for root growth
+const MAX_WATERING_DURATION = 60; // Maximum watering session length
+const MIN_WATERING_DURATION = 30; // STRICT minimum - never water less than this
+const TARGET_WATERINGS_PER_WEEK = 3; // Target 2-3 waterings per week, not daily
 
 // Verify cron secret to prevent unauthorized access
 function verifyCronSecret(request: Request): boolean {
@@ -62,47 +63,65 @@ async function getAIWateringDecision(
     model: "gemini-2.0-flash-exp",
   });
 
+  // Count waterings in the last 7 days
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const wateringsThisWeek = recentHistory.filter(event => {
+    const eventDate = new Date((event as { started_at?: string }).started_at || 0);
+    return eventDate > oneWeekAgo;
+  }).length;
+
   const prompt = `You are an expert gardener analyzing soil moisture data for automated watering.
 
-PLANT INFORMATION:
+=== STRICT RULES (MUST FOLLOW) ===
+
+RULE 1 - WATERING FREQUENCY: Water ONLY 2-3 times per week, NOT daily.
+- Waterings this week so far: ${wateringsThisWeek}
+- Target: ${TARGET_WATERINGS_PER_WEEK} waterings per week maximum
+- If already watered ${TARGET_WATERINGS_PER_WEEK}+ times this week, DO NOT WATER unless soil is critically dry (<20%)
+- Last watered: ${lastWateredDaysAgo !== null ? `${lastWateredDaysAgo} days ago` : "Unknown"}
+- If watered yesterday or today, DO NOT WATER again unless emergency
+
+RULE 2 - DURATION: If watering, MUST be between ${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} minutes.
+- NEVER suggest less than ${MIN_WATERING_DURATION} minutes
+- Short waterings (under 30 min) create shallow roots - this is BAD
+- Deep watering encourages root growth - this is the goal
+
+RULE 3 - SKIP WATERING if any of these are true:
+- Already watered 3+ times this week
+- Watered within the last 2 days AND soil moisture > 25%
+- Rain expected in next 24 hours
+- Soil moisture > 40%
+
+=== PLANT INFORMATION ===
 - Plant: Leighton Green hedges (Cupressocyparis leylandii)
 - Location: Mount Eliza, Victoria, Australia
 - Planted: 13/12/2025 (about 1 month old - still establishing)
 - Zone: Front Right Garden Hedges
 
-CURRENT CONDITIONS:
+=== CURRENT CONDITIONS ===
 - Soil Moisture: ${moisture}%
 - Soil Temperature: ${temperature !== null ? `${temperature}°C` : "Unknown"}
+- Waterings this week: ${wateringsThisWeek}
 - Last Watered: ${lastWateredDaysAgo !== null ? `${lastWateredDaysAgo} days ago` : "Unknown"}
 
-WEATHER DATA:
+=== WEATHER DATA ===
 ${JSON.stringify(weatherData, null, 2)}
 
-RECENT WATERING HISTORY (last 5 events):
+=== RECENT WATERING HISTORY (last 5 events) ===
 ${JSON.stringify(recentHistory.slice(0, 5), null, 2)}
 
-WATERING GUIDELINES FOR YOUNG LEIGHTON GREENS:
-- Optimal soil moisture for newly planted hedges: 30-40%
-- Below 25%: Soil is too dry, needs immediate watering
-- 25-35%: Getting dry, consider watering
-- 35-45%: Good moisture level
-- Above 45%: Well hydrated, no watering needed
-- Young plants (under 6 months) need consistent moisture to establish roots
-- Water deeply but not too frequently to encourage deep root growth
+=== SOIL MOISTURE GUIDELINES ===
+- Below 20%: CRITICAL - water immediately (${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} min)
+- 20-30%: Dry - water if not watered in last 2 days (${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} min)
+- 30-40%: Adequate - only water if last watering was 3+ days ago
+- Above 40%: Good - DO NOT water
 
-CONSTRAINTS:
-- Maximum watering duration: ${MAX_WATERING_DURATION} minutes
-- Minimum watering duration: ${MIN_WATERING_DURATION} minutes
-- Consider recent rainfall - don't water if significant rain recently
-- Consider forecast - don't water if heavy rain expected soon
-
-Based on all this information, should the automated system water now?
-
-Respond in JSON format only:
+=== DECISION ===
+Based on the STRICT RULES above, respond in JSON format only:
 {
   "shouldWater": true/false,
-  "durationMinutes": number (0 if not watering, ${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} if watering),
-  "reason": "Brief explanation of your decision",
+  "durationMinutes": number (0 if not watering, MUST be ${MIN_WATERING_DURATION}-${MAX_WATERING_DURATION} if watering),
+  "reason": "Brief explanation referencing which rule applied",
   "confidence": "high/medium/low"
 }`;
 
